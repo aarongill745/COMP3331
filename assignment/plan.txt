@@ -1,0 +1,5 @@
+- init TCP connection
+- auth
+- client interacts with server through CLI.
+- init available commands if auth.
+- 
