@@ -1,8 +1,16 @@
 from socket import *
 from threading import Thread
-import sys, select
+import sys, select, time
 
+
+def logLogin(username):
+    with open('userlog.txt', 'w') as f:
+        f.write()
+
+
+# Function to authenticate user
 def authenticate_user(username, password):
+    # Finds username and password in credentials.txt
     with open("credentials.txt", "r") as f:
         for line in f:
             u, p = line.strip().split()
@@ -10,53 +18,65 @@ def authenticate_user(username, password):
                 return True
     return False
 
-serverPort = int(sys.argv[1])
+try:
+    serverPort = int(sys.argv[1])
+    max_failed_attempts = int(sys.argv[2])
+    if max_failed_attempts < 1 or max_failed_attempts > 5:
+        print("Invalid number of allowed failed consecutive attempts. The valid value of the argument is an integer between 1 and 5.")
+        sys.exit(1)
+except ValueError:
+    print("Invalid argument types. Both arguments should be integers.")
+    sys.exit(1)
+
 serverAddress = ("127.0.0.1", serverPort)
 serverSocket = socket(AF_INET, SOCK_STREAM)
 serverSocket.bind(serverAddress)
+
+failed_attempts = 0
 
 class ClientThread(Thread):
     def __init__(self, clientAddress, clientSocket):
         Thread.__init__(self)
         self.clientAddress = clientAddress
         self.clientSocket = clientSocket
-        self.clientAlive = True
         self.clientAuthenticated = False
 
-        print("New connection created for: ", clientAddress)
-        self.clientAlive = True
-
     def run(self):
-        while self.clientAlive:
+        global failed_attempts
+        while True:
             data = self.clientSocket.recv(1024)
             message = data.decode()
-            if message == '':
-                self.clientAlive = False
-                print("User disconnected - ", self.clientAddress)
-                break
 
             if message == 'login':
                 self.process_login()
             elif message == 'download':
                 self.process_download()
-            else:
-                message = 'Cannot understand this message'
-                self.clientSocket.send(message.encode())
-    
+
+            if failed_attempts >= max_failed_attempts:
+                time.sleep(10)
+                failed_attempts = 0
+                self.process_login()
+
     def process_login(self):
-        message = 'user credentials request'
-        self.clientSocket.send(message.encode())
+        global failed_attempts
+        self.clientSocket.send('user credentials request'.encode())
         credentials = self.clientSocket.recv(1024).decode().split()
         if authenticate_user(credentials[0], credentials[1]):
             self.clientAuthenticated = True
             self.clientSocket.send("Authentication successful".encode())
+            client_udp_port = self.clientSocket.recv(1024).decode()  # Receive UDP port
+            timestamp = time.strftime("%d %b %Y %H:%M:%S", time.gmtime())
+            with open("userlog.txt", "a") as f:
+                f.write(f"1; {timestamp}; {credentials[0]}; {self.clientAddress[0]}; {client_udp_port}\n")
+            failed_attempts = 0
         else:
-            self.clientSocket.send("Authentication failed".encode())
+            self.clientSocket.send("Invalid Password. Please try again".encode())
+            failed_attempts += 1
+            self.process_login()
 
     def process_download(self):
         if self.clientAuthenticated:
-            message = 'download filename'
-            self.clientSocket.send(message.encode())
+            self.clientSocket.send('download filename'.encode())
         else:
             self.clientSocket.send("Please login first".encode())
 

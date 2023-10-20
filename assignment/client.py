@@ -3,9 +3,10 @@ import sys
 
 serverHost = sys.argv[1]
 serverPort = int(sys.argv[2])
+client_udp_port = sys.argv[3]
 serverAddress = (serverHost, serverPort)
-clientSocket = socket(AF_INET, SOCK_STREAM)
 
+clientSocket = socket(AF_INET, SOCK_STREAM)
 clientSocket.connect(serverAddress)
 
 def messageReceived():
@@ -13,16 +14,17 @@ def messageReceived():
     password = input("Enter your password: ")
     clientSocket.sendall(f"{username} {password}".encode())
     auth_status = clientSocket.recv(1024).decode()
+    if auth_status == "Authentication successful":
+        clientSocket.sendall(client_udp_port.encode())
     print(f"[recv] {auth_status}")
-
-
 
 while True:
     message = input("Please type any message you want to send to server:\n")
     clientSocket.sendall(message.encode())
     data = clientSocket.recv(1024)
     receivedMessage = data.decode()
-
+    print(f"receivedMessage: {receivedMessage}")
+    
     if receivedMessage == "user credentials request":
         messageReceived()
 
@@ -32,7 +34,7 @@ while True:
 
     elif receivedMessage == "Please login first":
         print("[recv] You need to login first.")
-        
+
     else:
         print("[recv] Message makes no sense")
 
@@ -41,3 +43,4 @@ while True:
         break
 
 clientSocket.close()
+
