@@ -1,46 +1,48 @@
 from socket import *
 import sys
+from threading import Thread
 
 serverHost = sys.argv[1]
 serverPort = int(sys.argv[2])
-client_udp_port = sys.argv[3]
+clientUdpPort = sys.argv[3]
 serverAddress = (serverHost, serverPort)
 
 clientSocket = socket(AF_INET, SOCK_STREAM)
 clientSocket.connect(serverAddress)
 
-def messageReceived():
-    username = input("Enter your username: ")
-    password = input("Enter your password: ")
-    clientSocket.sendall(f"{username} {password}".encode())
-    auth_status = clientSocket.recv(1024).decode()
-    if auth_status == "Authentication successful":
-        clientSocket.sendall(client_udp_port.encode())
-    print(f"[recv] {auth_status}")
+def listenForMessages(): 
+    while True:
+        try:
+            message = clientSocket.recv(1024).decode()
+            if message:
+                print(message)
+                print("""\n\nEnter one of the following commands (/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /p2pvideo ,/logout):""")
+        except OSError:
+            break
+        except Exception as e:
+            print(f"error: {e}")
+            break
 
-while True:
-    message = input("Please type any message you want to send to server:\n")
-    clientSocket.sendall(message.encode())
-    data = clientSocket.recv(1024)
-    receivedMessage = data.decode()
-    print(f"receivedMessage: {receivedMessage}")
-    
-    if receivedMessage == "user credentials request":
-        messageReceived()
+# Creating a thread for when clients can listen to messages
+# Used thread to avoid clashes between sending and receiving, client can now do both.
+receiverThread = Thread(target=listenForMessages, daemon=True)
+receiverThread.start()
+def authenticate():
+    while True:
+        username = input("Enter your username: ")
+        password = input("Enter your password: ")
+        clientSocket.sendall(f"/login {username} {password}".encode())
+        auth_status = clientSocket.recv(1024).decode()
+        if auth_status == "Authentication successful":
+            break
+        print(auth_status)
 
-    elif receivedMessage == "download filename":
-        filename = input("Enter the filename to download: ")
-        print(f"Downloading {filename}...")
+authenticate()
 
-    elif receivedMessage == "Please login first":
-        print("[recv] You need to login first.")
-
-    else:
-        print("[recv] Message makes no sense")
-
-    ans = input('Do you want to continue(y/n): ')
-    if ans == 'n':
-        break
-
-clientSocket.close()
+try:
+    while True:
+        message = input("""Enter one of the following commands (/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /p2pvideo ,/logout):\n""")
+        clientSocket.sendall(message.encode())
+finally:
+    clientSocket.close()
 
