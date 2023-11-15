@@ -15,6 +15,9 @@ def listenForMessages():
         try:
             message = clientSocket.recv(1024).decode()
             if message:
+                if message == 'Later gator!':
+                    clientSocket.close()
+                    break
                 print(message)
                 print("""\n\nEnter one of the following commands (/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /p2pvideo ,/logout):""")
         except OSError:
@@ -22,11 +25,12 @@ def listenForMessages():
         except Exception as e:
             print(f"error: {e}")
             break
-
 # Creating a thread for when clients can listen to messages
 # Used thread to avoid clashes between sending and receiving, client can now do both.
 receiverThread = Thread(target=listenForMessages, daemon=True)
 receiverThread.start()
+
+
 def authenticate():
     while True:
         username = input("Enter your username: ")
@@ -42,6 +46,8 @@ authenticate()
 try:
     while True:
         message = input("""Enter one of the following commands (/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /p2pvideo ,/logout):\n""")
+        if message == '/logout':
+            exit;
         clientSocket.sendall(message.encode())
 finally:
     clientSocket.close()

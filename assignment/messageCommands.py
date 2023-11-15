@@ -11,7 +11,6 @@ def sendPrivateMessage(clientThread, command, connectedClients):
     timestamp = datetime.now().strftime("%d %b %Y %H:%M:%S")
     
     # debugPrint(clientThread, command, connectedClients)
-
     # Only split twice since message can be multiple words
     _, receiver, message = command.split(' ', 2) 
     

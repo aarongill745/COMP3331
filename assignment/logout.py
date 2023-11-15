@@ -1,7 +1,7 @@
 def logout(clientThread, connectedClients):
     if clientThread.clientUsername in connectedClients:
         connectedClients.pop(clientThread.clientUsername)
-    updateUserlog(clientThread.clientUsername)
+    # updateUserlog(clientThread.clientUsername)
     clientThread.clientSocket.send("Later gator!".encode())
     clientThread.clientSocket.close()
     return
