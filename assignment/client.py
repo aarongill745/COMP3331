@@ -1,54 +1,79 @@
 from socket import *
 import sys
+import json
+import time
 from threading import Thread
 
 serverHost = sys.argv[1]
 serverPort = int(sys.argv[2])
-clientUdpPort = sys.argv[3]
 serverAddress = (serverHost, serverPort)
 
 clientSocket = socket(AF_INET, SOCK_STREAM)
 clientSocket.connect(serverAddress)
 
+authenticated = False
+while not authenticated:
+    username = input("Enter your username: ")
+    password = input("Enter your password: ")
+    
+    if not username:
+        username = ''
+    if not password:
+        password = ''
+    
+    payload = {
+        'command': '/login',
+        'message': f"{username} {password}"
+    }
+    
+    clientSocket.sendall(json.dumps(payload).encode('utf-8'))
+    
+    response = clientSocket.recv(1024).decode('utf-8')
+    dict_response = json.loads(response) 
+    
+    if "Authentication successful" in dict_response['message']:
+        authenticated = True
+        
+    print(dict_response['message'])
+
 def listenForMessages(): 
     while True:
         try:
-            message = clientSocket.recv(1024).decode()
-            if message:
-                if message == 'Later gator!':
-                    clientSocket.close()
-                    break
-                print(message)
-                print("""\n\nEnter one of the following commands (/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /p2pvideo ,/logout):""")
+            response = clientSocket.recv(1024).decode('utf-8')
+            if not response:
+                break
+            dict_response = json.loads(response)
+            if dict_response['command'] == '/logout':
+                print("Logged out.")
+                clientSocket.close()
+                break
+            print(dict_response['message'])
         except OSError:
             break
         except Exception as e:
             print(f"error: {e}")
             break
-# Creating a thread for when clients can listen to messages
-# Used thread to avoid clashes between sending and receiving, client can now do both.
+    sys.exit()
+
+# Start listening for messages in a separate thread
 receiverThread = Thread(target=listenForMessages, daemon=True)
 receiverThread.start()
 
-
-def authenticate():
-    while True:
-        username = input("Enter your username: ")
-        password = input("Enter your password: ")
-        clientSocket.sendall(f"/login {username} {password}".encode())
-        auth_status = clientSocket.recv(1024).decode()
-        if auth_status == "Authentication successful":
-            break
-        print(auth_status)
-
-authenticate()
-
 try:
     while True:
-        message = input("""Enter one of the following commands (/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /p2pvideo ,/logout):\n""")
-        if message == '/logout':
-            exit;
-        clientSocket.sendall(message.encode())
+        message = input()
+        if not message:
+            continue
+        command, *args = message.split()
+        
+        if not args:
+            args = ''
+            
+        payload = {
+            'command': command,
+            'message': ' '.join(args)
+        }
+        
+        clientSocket.sendall(json.dumps(payload).encode('utf-8'))
 finally:
     clientSocket.close()
-
