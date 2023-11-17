@@ -17,9 +17,13 @@ groupchats = {}
 # {username: numAttempsFailed}
 failedAttemps = {}
 
+# {username: UdpPortNumber}
+userUdpPorts = {}
+
 commandHelp = "\nEnter one of the following commands (/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /logout):"
 
 def startServer(serverPort, maxFailedAttempts):
+    print("Serverport", )
     serverAddress = ("127.0.0.1", serverPort)
     serverSocket = socket(AF_INET, SOCK_STREAM)
     serverSocket.bind(serverAddress)
@@ -62,7 +66,9 @@ def logout(clientThread, connectedClients, message):
         return
     
     if clientThread.clientUsername in connectedClients:
-        connectedClients.pop(clientThread.clientUsername)  
+        connectedClients.pop(clientThread.clientUsername) 
+    if clientThread.clientUsername in userUdpPorts:
+        userUdpPorts.pop(clientThread.clientUsername) 
     sendResponseToThread(clientThread, '/logout', 'Logging out of TESSENGER. See you next time!')
     removeUserFromLogs(clientThread.clientUsername)
     time.sleep(0.5)
@@ -113,7 +119,7 @@ def isUserTimedOut(username):
         return False
 
 def processLogin(clientThread, message):
-    username, password = message.split()
+    username, password, udpPort = message.split()
 
     global failedAttemps
     currentFailedAttemps = failedAttemps.get(username, 0)
@@ -130,6 +136,7 @@ def processLogin(clientThread, message):
     elif authenticateUser(username, password): 
         clientThread.clientAuthenticated = True
         clientThread.clientUsername = username
+        userUdpPorts[username] = udpPort
         failedAttemps[username] = 0
         
         loginTime = datetime.now().strftime('%d %b %Y %H:%M:%S')
@@ -143,9 +150,10 @@ def processLogin(clientThread, message):
     return
 
 def addToUserlog(clientThread, loginTime):
-    ip, port = clientThread.clientSocket.getpeername()
+    global userUdpPorts
+    ip, _ = clientThread.clientSocket.getpeername()
     with open('userlog.txt', 'a') as f:
-        f.write(f"{len(connectedClients)}; {loginTime}; {clientThread.clientUsername}; {ip}; {port}\n")
+        f.write(f"{len(connectedClients)}; {loginTime}; {clientThread.clientUsername}; {ip}; {userUdpPorts[clientThread.clientUsername]}\n")
     return
     
 # Group chat services
@@ -253,9 +261,10 @@ def getActiveUsers(clientThread, message):
     if len(activeUsers) == 0:
         message += "No other active user"
     else:
+        global userUdpPorts
         for username, (socket, loginTime) in activeUsers.items():
-            ip, port = socket.getpeername()
-            message += f"{username}; {ip}; {port}; active since {str(loginTime)}\n"
+            ip, _ = socket.getpeername()
+            message += f"{username}; {ip}; {userUdpPorts[username]}; active since {str(loginTime)}\n"
 
     sendResponseToThread(clientThread, '/activeuser', message + commandHelp)
     return

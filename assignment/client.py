@@ -6,6 +6,7 @@ from threading import Thread
 
 serverHost = sys.argv[1]
 serverPort = int(sys.argv[2])
+udpPort = sys.argv[3]
 serverAddress = (serverHost, serverPort)
 
 clientSocket = socket(AF_INET, SOCK_STREAM)
@@ -23,7 +24,7 @@ while not authenticated:
     
     payload = {
         'command': '/login',
-        'message': f"{username} {password}"
+        'message': f"{username} {password} {udpPort}"
     }
     
     clientSocket.sendall(json.dumps(payload).encode('utf-8'))
