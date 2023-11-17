@@ -2,6 +2,7 @@ from socket import *
 from threading import Thread
 import sys, select, time
 import json
+import re
 from datetime import datetime
 
 # {username: (socket, loginTime)}
@@ -9,6 +10,14 @@ connectedClients = {}
 
 # {username: timeoutStart}
 timeouts = {}
+
+# {groupName: {user: groupStatus}} groupStatus is either "joined" or "invited" 
+groupchats = {}
+
+# {username: numAttempsFailed}
+failedAttemps = {}
+
+commandHelp = "\nEnter one of the following commands (/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /logout):"
 
 def startServer(serverPort, maxFailedAttempts):
     serverAddress = ("127.0.0.1", serverPort)
@@ -36,11 +45,6 @@ def sendResponseToThread(ClientThread, command, message):
         'command': command,
         'message': message,
     }
-
-    if command != '/logout' and (command == '/login' and message == 'Authentication successful'):
-        response['message'] += "\nEnter one of the following commands (/msgto, /activeuser, /creategroup, /joingroup, /groupmsg, /p2pvideo ,/logout):\n"
-    
-    print("Sending response to client", message)
     ClientThread.clientSocket.send(json.dumps(response).encode('utf-8'))
 
 def sendResponseToSocket(clientSocket, command, message):
@@ -48,17 +52,23 @@ def sendResponseToSocket(clientSocket, command, message):
         'command': command,
         'message': message,
     }
-    print("Sending response to client")
     clientSocket.send(json.dumps(response).encode('utf-8'))
+
 # Logout
 
-def logout(clientThread, connectedClients):
+def logout(clientThread, connectedClients, message):
+    if len(message) > 0:
+        sendResponseToThread(clientThread, '', 'Incorrect usage: /logout' + commandHelp)
+        return
+    
     if clientThread.clientUsername in connectedClients:
-        connectedClients.pop(clientThread.clientUsername)
+        connectedClients.pop(clientThread.clientUsername)  
     sendResponseToThread(clientThread, '/logout', 'Logging out of TESSENGER. See you next time!')
     removeUserFromLogs(clientThread.clientUsername)
-    clientThread.clientSocket.close()
-
+    time.sleep(0.5)
+    print(f"{clientThread.clientUsername} logout")
+    clientThread.clientAuthenticated = False
+    clientThread.clientUsername = None
     return
 
 def removeUserFromLogs(username):
@@ -102,28 +112,34 @@ def isUserTimedOut(username):
     else:
         return False
 
-def processLogin(clientThread, username, password):
+def processLogin(clientThread, message):
+    username, password = message.split()
+
+    global failedAttemps
+    currentFailedAttemps = failedAttemps.get(username, 0)
+    
     # Timeout after x failed attempts
+    print(f"logging in:\nusername: {username}\npassword: {password}")
     if isUserTimedOut(username):
         sendResponseToThread(clientThread, '/timeout', f"This user is currently timed out, please wait until {timeouts[username]} before trying again")
         
-    if clientThread.failedAttempts + 1 >= clientThread.maxFailedAttempts:
-        timeouts[username] = datetime.now().strftime('%d %b %Y %H:%M:%S')
+    if currentFailedAttemps + 1 >= clientThread.maxFailedAttempts:
+        timeouts[username] = datetime.now()
         sendResponseToThread(clientThread, '/timeout', 'Entered password wrong too many times, please wait 10 seconds before trying again')
-        clientThread.failedAttempts = 0
+        failedAttemps[username] = 0
     elif authenticateUser(username, password): 
         clientThread.clientAuthenticated = True
         clientThread.clientUsername = username
-        clientThread.failedAttempts = 0
+        failedAttemps[username] = 0
         
         loginTime = datetime.now().strftime('%d %b %Y %H:%M:%S')
         connectedClients[clientThread.clientUsername] = (clientThread.clientSocket, loginTime)
         
         addToUserlog(clientThread, loginTime)
-        sendResponseToThread(clientThread, '/login', 'Authentication successful')
+        sendResponseToThread(clientThread, '/login', 'Authentication successful' + commandHelp)
     else:
         sendResponseToThread(clientThread, '/login', 'Invalid password. Please try again')
-        clientThread.failedAttempts += 1
+        failedAttemps[username] = currentFailedAttemps + 1
     return
 
 def addToUserlog(clientThread, loginTime):
@@ -131,11 +147,103 @@ def addToUserlog(clientThread, loginTime):
     with open('userlog.txt', 'a') as f:
         f.write(f"{len(connectedClients)}; {loginTime}; {clientThread.clientUsername}; {ip}; {port}\n")
     return
+    
+# Group chat services
+def createGroup(clientThread, message):
+    parts = message.split(' ', 1)
+    if len(parts) < 2:
+        sendResponseToThread(clientThread, '', 'Incorrect usage: /creategroup groupname USERS' + commandHelp)
+        return
+    
+    groupName, users = parts
         
-# Active users 
+    clientMessage = ''
+    if not re.match(r'^[a-zA-Z0-9]+$', groupName):
+        clientMessage = "Invalid group name"
+    elif groupName in groupchats.keys():
+        clientMessage = f"Group chat {groupName} already exists"
+    elif clientThread.clientUsername in users:
+        clientMessage = f"You can not invite yourself to a group, try again"
+    else:
+        chatMembers = {}
+        
+        # Add owner
+        chatMembers[clientThread.clientUsername] = "joined"
+        # Invite initial users
+        users = users.split(' ')
+        for user in users:
+            chatMembers[user] = "invited"
+            
+        groupchats[groupName] = chatMembers
+        clientMessage = f"Group chat rom has been created, room name: {groupName}, users in this room: {', '.join(users)}"
+        with open(f"{groupName}_messagelog.txt", 'w'):
+            pass 
+        
+    sendResponseToThread(clientThread, '/creategroup', clientMessage + commandHelp)
+    return
+    
+# Join a group chat
+def joinGroup(clientThread, groupName):
+    if len(groupName.split(' ')) != 1 or groupName == '':
+        sendResponseToThread(clientThread, '', 'Incorrect usage: /joingroup groupname' + commandHelp)
+        return
+    
+    global groupchats
+    clientMessage = ''
+    if groupName not in groupchats.keys():
+        clientMessage = "this group chat does not exist"
+    elif clientThread.clientUsername not in groupchats[groupName].keys():
+        clientMessage = "You have not been invited to this group chat"
+    elif groupchats[groupName][clientThread.clientUsername] == 'joined':
+        clientMessage = "You have already joined this groupchat"
+    else:
+        groupchats[groupName][clientThread.clientUsername] = 'joined'
+        clientMessage = f"You have joined {groupName} successfully"
+    sendResponseToThread(clientThread, '/joingroup', clientMessage + commandHelp)
 
-def getActiveUsers(clientThread):
-    # print(f"Current active users:\n{connectedClients}\n")
+def groupMsg(clientThread, params):
+    if len(params.split(' ')) < 2:
+        sendResponseToThread(clientThread, '', 'Incorrect usage: /groupmsg groupname MESSAGE_CONTENT' + commandHelp)
+        return
+    
+    groupName, message = params.split(' ', 1)
+        
+    clientMessage = ''
+    if groupName not in groupchats.keys():
+        clientMessage = "This group chat does not exist"
+    elif clientThread.clientUsername not in groupchats[groupName].keys():
+        clientMessage = "You are not in this group chat"
+    elif groupchats[groupName][clientThread.clientUsername] == 'invited':
+        clientMessage = "You need to accept the invite before sending a group message"
+    else:
+        timestamp = datetime.now().strftime("%d %b %Y %H:%M:%S")
+        for username, status in groupchats[groupName].items():
+            if username != clientThread.clientUsername and status == 'joined' and username in connectedClients.keys():
+                (userSocket, timejoined) = connectedClients[username]
+                sendResponseToSocket(userSocket, '/groupmsg', f"{timestamp}, {groupName}, {clientThread.clientUsername}: {message}" + commandHelp)  
+        logGroupMessage(clientThread.clientUsername, message, groupName, timestamp)
+        clientMessage = "Message has been sent!"
+    sendResponseToThread(clientThread, '/groupmsg', clientMessage + commandHelp)
+    
+def logGroupMessage(username, message, groupname, timestamp):
+    sequenceNumber = 0
+    filename = f"{groupname}_messagelog.txt"
+    num = 1
+    with open(filename, 'r') as f:
+        for num, _ in enumerate(f, 2):
+            pass
+        sequenceNumber = num
+    
+    with open(filename, 'a') as f:
+        f.write(f"{sequenceNumber}; {timestamp}; {username}; {message}\n")
+
+# Active users 
+def getActiveUsers(clientThread, message):
+
+    if len(message) > 0:
+        sendResponseToThread(clientThread, '', 'Incorrect usage: /activeuser' + commandHelp)
+        return
+
     activeUsers = connectedClients.copy()
     # remove current user form the copied version of connectedClients
     del activeUsers[clientThread.clientUsername]
@@ -149,48 +257,41 @@ def getActiveUsers(clientThread):
             ip, port = socket.getpeername()
             message += f"{username}; {ip}; {port}; active since {str(loginTime)}\n"
 
-    sendResponseToThread(clientThread, '/activeuser', message)
+    sendResponseToThread(clientThread, '/activeuser', message + commandHelp)
     return
 
 # Msgto command functions
 
-def debugPrint(clientThread, command, connectedClients):
-    print("Message Commands Debug")
-    print(f"|    sent by: {clientThread.clientUsername}")
-    print(f"|    contents: {command}")
-    print(f"|    connected clients: {connectedClients}")
-    return
-
 def msgto(clientThread, command, connectedClients): 
     timestamp = datetime.now().strftime("%d %b %Y %H:%M:%S")
     
-    # debugPrint(clientThread, command, connectedClients)
-
-    if len(command) < 2:
-        sendResponseToThread(clientThread, '/msgto', 'Incorrect usage: /msgto USERNAME MESSAGE_CONTENT')
+    if len(command.split(' ')) < 2:
+        sendResponseToThread(clientThread, '', 'Incorrect usage: /msgto USERNAME MESSAGE_CONTENT' + commandHelp)
+        return
         
     # Only split twice once message can be multiple words
     receiver, message = command.split(' ', 1) 
-
-    # print(f"Trying to send message:\nsender: {clientThread.clientUsername}\nreceiver: {receiver}\nmessage: {message}\n")
     
     if receiver in connectedClients:
         (receiverSocket, _) = connectedClients[receiver]
         try:
-            sendResponseToSocket(receiverSocket, '', f"[{timestamp}] From {clientThread.clientUsername}: {message}")
+            sendResponseToSocket(receiverSocket, '', f"[{timestamp}], {clientThread.clientUsername}: {message}" + commandHelp)
             logMessage(receiver, message, timestamp)
         except Exception as e:
             print(f"Error sending message: {e}")   
 
-    sendResponseToThread(clientThread, '/msgto', 'Message has been sent')
+    sendResponseToThread(clientThread, '/msgto', 'Message has been sent' + commandHelp)
     return
 
 def logMessage(username, message, timestamp):
+    sequenceNumber = 0
+    count = 1
+    with open('messagelog.txt', 'r') as f:
+        for count, _ in enumerate(f, 2):
+            pass
+        sequenceNumber = count
     with open('messagelog.txt', 'a') as f:
-        f.seek(0)
-        messageNumber = sum(1 for _ in f) + 1
-        f.write(f"{messageNumber}; {timestamp}; {username}; {message}\n")
-
+        f.write(f"{sequenceNumber}; {timestamp}; {username}; {message}\n")
 
 class ClientThread(Thread):
     def __init__(self, clientAddress, clientSocket, maxFailedAttempts):
@@ -198,34 +299,37 @@ class ClientThread(Thread):
         self.clientAddress = clientAddress
         self.clientSocket = clientSocket
         self.clientAuthenticated = False
-        self.failedAttempts = 0
         self.maxFailedAttempts = maxFailedAttempts
         self.clientUsername = None
+        self.closeThread = False
 
     def run(self):
         global connectedClients
         try:
-            while True:
+            while not self.closeThread:
                 data = self.clientSocket.recv(1024)
                 dict = json.loads(data.decode('utf-8'))
-                print('dict:', dict)
 
                 command = dict['command']
                 message = dict['message']
                 
                 if command == '/login':
-                    username, password = message.split()
                     # Adding client socket to connectedClients
-                    processLogin(self, username, password)    
+                    processLogin(self, message)    
                 elif command == '/msgto':
                     msgto(self, message, connectedClients)
                 elif command == '/logout':
-                    logout(self, connectedClients)
-                    break
+                    logout(self, connectedClients, message)
                 elif command == '/activeuser':
-                    getActiveUsers(self)
+                    getActiveUsers(self, message)
+                elif command == '/creategroup':
+                    createGroup(self, message)
+                elif command == '/joingroup':
+                    joinGroup(self, message)
+                elif command == '/groupmsg':
+                    groupMsg(self, message)
                 else:
-                    sendResponseToThread(self, '', 'Invalid command')
+                    sendResponseToThread(self, '', 'Invalid command' + commandHelp)
         finally:
             self.clientSocket.close()
 

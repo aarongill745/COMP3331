@@ -36,16 +36,18 @@ while not authenticated:
         
     print(dict_response['message'])
 
+processRunning = True
 def listenForMessages(): 
-    while True:
+    global processRunning
+    while processRunning:
         try:
             response = clientSocket.recv(1024).decode('utf-8')
             if not response:
                 break
             dict_response = json.loads(response)
             if dict_response['command'] == '/logout':
-                print("Logged out.")
-                clientSocket.close()
+                print("Logging out.")
+                processRunning = False
                 break
             print(dict_response['message'])
         except OSError:
@@ -53,14 +55,15 @@ def listenForMessages():
         except Exception as e:
             print(f"error: {e}")
             break
-    sys.exit()
 
 # Start listening for messages in a separate thread
 receiverThread = Thread(target=listenForMessages, daemon=True)
 receiverThread.start()
 
 try:
-    while True:
+    while processRunning:
+        if not processRunning:
+            break
         message = input()
         if not message:
             continue
@@ -76,4 +79,6 @@ try:
         
         clientSocket.sendall(json.dumps(payload).encode('utf-8'))
 finally:
+    receiverThread.join()
     clientSocket.close()
+    sys.exit()
